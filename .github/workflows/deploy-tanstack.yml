@@ -1,0 +1,115 @@
+name: Deploy TanStack to Plesk
+
+on:
+  workflow_call:
+    inputs:
+      deploy_path:
+        required: true
+        type: string
+      site_url:
+        required: true
+        type: string
+
+    secrets:
+      PLESK_HOST:
+        required: true
+      PLESK_USER:
+        required: true
+      PLESK_SSH_KEY:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          set -e
+
+          mkdir -p ~/.ssh
+
+          echo "${{ secrets.PLESK_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan -H "${{ secrets.PLESK_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Test SSH
+        run: |
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -o PreferredAuthentications=publickey \
+            -o PasswordAuthentication=no \
+            "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}" \
+            "echo SSH OK"
+
+      - name: Upload project
+        run: |
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".github" \
+            --exclude ".output" \
+            --exclude "dist" \
+            --exclude "node_modules" \
+            --exclude ".env" \
+            --exclude "tmp" \
+            ./ \
+            "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}:${{ inputs.deploy_path }}/"
+
+      - name: Build on server
+        run: |
+          ssh "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}" << EOF
+
+          set -e
+
+          export PATH=/opt/plesk/node/22/bin:\$PATH
+
+          cd "${{ inputs.deploy_path }}"
+
+          echo "Node:"
+          node -v
+          npm -v
+
+          test -f package.json
+
+          rm -f index.html
+          rm -rf .output dist
+
+          npm install --legacy-peer-deps --no-audit --no-fund
+
+          npm run build
+
+          test -f .output/server/index.mjs
+
+          cat > app.js << 'APP'
+          import './.output/server/index.mjs'
+          APP
+
+          DOMAIN=\$(echo "${{ inputs.deploy_path }}" | awk -F/ '{print \$5}')
+
+          PASSENGER_USER=\$(grep "PassengerUser" /var/www/vhosts/system/\$DOMAIN/conf/httpd.conf | sed -E 's/.*PassengerUser "([^"]+)".*/\1/')
+
+          mkdir -p tmp
+
+          chown -R \$PASSENGER_USER:psacln \
+            app.js \
+            .output \
+            tmp \
+            node_modules \
+            package.json \
+            package-lock.json \
+            .env 2>/dev/null || true
+
+          touch tmp/restart.txt
+
+          echo "Deploy completed."
+
+          EOF
+
+      - name: Smoke Test
+        run: |
+          sleep 5
+
+          curl -I "${{ inputs.site_url }}"
