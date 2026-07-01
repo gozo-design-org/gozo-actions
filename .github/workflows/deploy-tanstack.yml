@@ -3,10 +3,10 @@ name: Deploy TanStack to Plesk
 on:
   workflow_call:
     inputs:
-      deploy_path:
+      DEPLOY_PATH:
         required: true
         type: string
-      site_url:
+      SITE_URL:
         required: true
         type: string
 
