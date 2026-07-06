@@ -58,7 +58,10 @@ jobs:
       - name: Upload project
         shell: bash
         run: |
-          rsync -az --delete \
+          rsync -rlz \
+            --delete \
+            --omit-dir-times \
+            --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r \
             -e "ssh -i ~/.ssh/id_ed25519" \
             --exclude ".git" \
             --exclude ".github" \
