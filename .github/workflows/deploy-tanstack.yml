@@ -166,6 +166,7 @@ jobs:
           set -e
 
           export PATH=/opt/plesk/node/22/bin:\$PATH
+          export NITRO_PRESET=node-server
 
           cd "${{ inputs.DEPLOY_PATH }}"
 
@@ -186,6 +187,10 @@ jobs:
           cat > app.js << 'APP'
           import './.output/server/index.mjs'
           APP
+
+          chmod 755 .
+          chmod 644 app.js
+          chmod -R u+rwX,go+rX .output
 
           mkdir -p tmp
           touch tmp/restart.txt
