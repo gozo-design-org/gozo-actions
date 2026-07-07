@@ -25,6 +25,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -e
+
+          DEPLOY_PATH="${{ inputs.DEPLOY_PATH }}"
+          SITE_URL="${{ inputs.SITE_URL }}"
+
+          if [ -z "$DEPLOY_PATH" ]; then
+            echo "ERROR: DEPLOY_PATH is empty"
+            exit 1
+          fi
+
+          if [ "$DEPLOY_PATH" = "/" ]; then
+            echo "ERROR: DEPLOY_PATH must not be /"
+            exit 1
+          fi
+
+          case "$DEPLOY_PATH" in
+            /var/www/vhosts/*)
+              echo "DEPLOY_PATH OK: $DEPLOY_PATH"
+              ;;
+            *)
+              echo "ERROR: DEPLOY_PATH must start with /var/www/vhosts/"
+              exit 1
+              ;;
+          esac
+
+          if [ -z "$SITE_URL" ]; then
+            echo "ERROR: SITE_URL is empty"
+            exit 1
+          fi
+
+          case "$SITE_URL" in
+            https://*)
+              echo "SITE_URL OK: $SITE_URL"
+              ;;
+            *)
+              echo "ERROR: SITE_URL must start with https://"
+              exit 1
+              ;;
+          esac
+
       - name: Setup SSH
         shell: bash
         run: |
@@ -36,10 +79,7 @@ jobs:
           printf '%s\n' "${{ secrets.PLESK_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
-          # Alte Hostkeys entfernen (z.B. nach Server-Restore)
           ssh-keygen -R "${{ secrets.PLESK_HOST }}" 2>/dev/null || true
-
-          # Aktuellen Hostkey speichern
           ssh-keyscan -T 10 -H "${{ secrets.PLESK_HOST }}" > ~/.ssh/known_hosts
 
           chmod 644 ~/.ssh/known_hosts
@@ -58,9 +98,14 @@ jobs:
       - name: Upload project
         shell: bash
         run: |
+          set -e
+
           rsync -rlz \
-            --delete \
+            --delete-after \
             --omit-dir-times \
+            --no-owner \
+            --no-group \
+            --no-perms \
             --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r \
             -e "ssh -i ~/.ssh/id_ed25519" \
             --exclude ".git" \
@@ -78,11 +123,11 @@ jobs:
         run: |
           ssh \
             -i ~/.ssh/id_ed25519 \
-            "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}" << 'EOF'
+            "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}" << EOF
 
           set -e
 
-          export PATH=/opt/plesk/node/22/bin:$PATH
+          export PATH=/opt/plesk/node/22/bin:\$PATH
 
           cd "${{ inputs.DEPLOY_PATH }}"
 
@@ -90,16 +135,15 @@ jobs:
           node -v
           npm -v
 
-          test -f package.json
+          test -f package.json || { echo "ERROR: package.json missing"; exit 1; }
 
           rm -f index.html
           rm -rf .output dist
 
           npm install --legacy-peer-deps --no-audit --no-fund
-
           npm run build
 
-          test -f .output/server/index.mjs
+          test -f .output/server/index.mjs || { echo "ERROR: .output/server/index.mjs missing"; exit 1; }
 
           cat > app.js << 'APP'
           import './.output/server/index.mjs'
