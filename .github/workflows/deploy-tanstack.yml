@@ -188,9 +188,8 @@ jobs:
           import './.output/server/index.mjs'
           APP
 
-          chmod 755 .
-          chmod 644 app.js
-          chmod -R u+rwX,go+rX .output
+          chmod 644 app.js || true
+          chmod -R u+rwX,go+rX .output || true
 
           mkdir -p tmp
           touch tmp/restart.txt
