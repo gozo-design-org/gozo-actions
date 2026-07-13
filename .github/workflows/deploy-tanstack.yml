@@ -180,7 +180,9 @@ jobs:
           rm -rf .output dist
 
           npm install --legacy-peer-deps --no-audit --no-fund
-          npm run build
+          export PATH=/opt/plesk/node/22/bin:$PATH
+
+          node ./node_modules/vite/bin/vite.js build
 
           test -f .output/server/index.mjs || { echo "ERROR: .output/server/index.mjs missing"; exit 1; }
 
