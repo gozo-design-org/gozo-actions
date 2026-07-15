@@ -1,0 +1,191 @@
+name: Deploy TanStack to Plesk
+
+on:
+  workflow_call:
+    inputs:
+      DEPLOY_PATH:
+        required: true
+        type: string
+      SITE_URL:
+        required: true
+        type: string
+      NODE_VERSION:
+        required: false
+        type: string
+        default: '22'
+    secrets:
+      PLESK_HOST:
+        required: true
+      PLESK_USER:
+        required: true
+      PLESK_SSH_KEY:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DEPLOY_PATH="${{ inputs.DEPLOY_PATH }}"
+          SITE_URL="${{ inputs.SITE_URL }}"
+
+          if [ -z "$DEPLOY_PATH" ] || [ "$DEPLOY_PATH" = "/" ]; then
+            echo "ERROR: DEPLOY_PATH is empty or root (/)"
+            exit 1
+          fi
+
+          case "$DEPLOY_PATH" in
+            /var/www/vhosts/*)
+              echo "DEPLOY_PATH OK: $DEPLOY_PATH"
+              ;;
+            *)
+              echo "ERROR: DEPLOY_PATH must start with /var/www/vhosts/"
+              exit 1
+              ;;
+          esac
+
+          if [ -z "$SITE_URL" ]; then
+            echo "ERROR: SITE_URL is empty"
+            exit 1
+          fi
+
+          case "$SITE_URL" in
+            https://*)
+              echo "SITE_URL OK: $SITE_URL"
+              ;;
+            *)
+              echo "ERROR: SITE_URL must start with https://"
+              exit 1
+              ;;
+          esac
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Build TanStack SSR app
+        shell: bash
+        env:
+          NITRO_PRESET: node-server
+        run: |
+          set -euo pipefail
+          rm -f index.html
+          rm -rf .output dist deploy-package
+          node ./node_modules/vite/bin/vite.js build
+          test -f .output/server/index.mjs || {
+            echo "ERROR: .output/server/index.mjs missing"
+            exit 1
+          }
+
+      - name: Prepare deploy package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p deploy-package/tmp
+          cp -R .output deploy-package/.output
+          cp package.json deploy-package/package.json
+          if [ -f package-lock.json ]; then
+            cp package-lock.json deploy-package/package-lock.json
+          fi
+
+          cat > deploy-package/app.js <<'APP'
+          import './.output/server/index.mjs'
+          APP
+
+          chmod 644 deploy-package/app.js || true
+          chmod -R u+rwX,go+rX deploy-package/.output || true
+
+      - name: Setup SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.PLESK_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -R "${{ secrets.PLESK_HOST }}" 2>/dev/null || true
+          ssh-keyscan -T 10 -H "${{ secrets.PLESK_HOST }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -o PreferredAuthentications=publickey \
+            -o PasswordAuthentication=no \
+            -o BatchMode=yes \
+            "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}" \
+            "echo SSH OK"
+
+      - name: Validate remote deploy path
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}" << EOF
+          set -euo pipefail
+          DEPLOY_PATH="${{ inputs.DEPLOY_PATH }}"
+
+          if [ ! -d "$DEPLOY_PATH" ]; then
+            echo "ERROR: Remote DEPLOY_PATH does not exist: $DEPLOY_PATH"
+            exit 1
+          fi
+
+          if [ ! -w "$DEPLOY_PATH" ]; then
+            echo "ERROR: Remote DEPLOY_PATH is not writable by ${{ secrets.PLESK_USER }}"
+            exit 1
+          fi
+
+          echo "Remote DEPLOY_PATH OK: $DEPLOY_PATH"
+          EOF
+
+      - name: Upload build artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -rlz \
+            --delete-after \
+            --omit-dir-times \
+            --no-owner \
+            --no-group \
+            --no-perms \
+            --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            deploy-package/ \
+            "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}:${{ inputs.DEPLOY_PATH }}/"
+
+      - name: Restart app on Plesk
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}" << EOF
+          set -euo pipefail
+          cd "${{ inputs.DEPLOY_PATH }}"
+          mkdir -p tmp
+          touch tmp/restart.txt
+          echo "Restart triggered."
+          EOF
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 5
+          curl -fsSLI "${{ inputs.SITE_URL }}"
