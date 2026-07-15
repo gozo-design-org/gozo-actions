@@ -72,12 +72,17 @@ jobs:
         with:
           node-version: ${{ inputs.NODE_VERSION }}
           cache: npm
-
+          cache-dependency-path: package-lock.json
+      
       - name: Install dependencies
         shell: bash
         run: |
           set -euo pipefail
-          npm install --legacy-peer-deps --no-audit --no-fund
+          test -f package-lock.json || {
+            echo "ERROR: package-lock.json missing in repository root"
+            exit 1
+          }
+          npm ci --legacy-peer-deps --no-audit --no-fund
 
       - name: Build TanStack SSR app
         shell: bash
