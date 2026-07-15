@@ -104,9 +104,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rsync -az --delete \
+          rsync -rlz --delete --omit-dir-times --no-perms --no-owner --no-group \
             -e "ssh -i ~/.ssh/id_ed25519" \
             deploy/ "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}:${{ inputs.DEPLOY_PATH }}/"
+
 
       - name: Restart application
         shell: bash
