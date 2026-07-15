@@ -38,27 +38,17 @@ jobs:
             exit 1
           fi
 
-      - name: Verify package-lock.json exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -f package-lock.json ]; then
-            echo "package-lock.json fehlt im Repo-Root."
-            exit 1
-          fi
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         shell: bash
         run: |
           set -euo pipefail
-          npm ci --legacy-peer-deps --no-audit --no-fund
+          npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: Build application
         shell: bash
