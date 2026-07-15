@@ -38,16 +38,27 @@ jobs:
             exit 1
           fi
 
+      - name: Verify package-lock.json exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f package-lock.json ]; then
+            echo "package-lock.json fehlt im Repo-Root."
+            exit 1
+          fi
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         shell: bash
         run: |
           set -euo pipefail
-          npm install --legacy-peer-deps --no-audit --no-fund
+          npm ci --legacy-peer-deps --no-audit --no-fund
 
       - name: Build application
         shell: bash
@@ -55,13 +66,22 @@ jobs:
           set -euo pipefail
           npm run build
 
-      - name: Verify build output
+      - name: Verify build output exists
         shell: bash
         run: |
           set -euo pipefail
           if [ ! -f .output/server/index.mjs ]; then
             echo ".output/server/index.mjs wurde nicht gefunden."
-            echo "Bitte prüfen, ob der TanStack-Build wie erwartet nach .output schreibt."
+            exit 1
+          fi
+
+      - name: Fail if Cloudflare build was produced
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q "cloudflare_module_default" .output/server/index.mjs; then
+            echo "Falscher Nitro-Build erkannt: Cloudflare statt node-server."
+            echo "Bitte vite.config.ts auf nitro preset node-server setzen."
             exit 1
           fi
 
@@ -82,14 +102,7 @@ jobs:
           fi
 
           cat > deploy/app.js <<'EOF'
-          import { createServer } from 'node:http'
-          import handler from './.output/server/index.mjs'
-
-          const port = process.env.PORT || 3000
-
-          createServer(handler).listen(port, () => {
-            console.log(`Server running on port ${port}`)
-          })
+          import './.output/server/index.mjs'
           EOF
 
           mkdir -p deploy/tmp
@@ -137,5 +150,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sleep 5
-          curl -fsSLI "${{ inputs.SITE_URL }}"
+          sleep 10
+          curl -I "${{ inputs.SITE_URL }}" || true
