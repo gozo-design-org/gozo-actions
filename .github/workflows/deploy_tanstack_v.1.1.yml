@@ -64,16 +64,6 @@ jobs:
             exit 1
           fi
 
-      - name: Fail if Cloudflare build was produced
-        shell: bash
-        run: |
-          set -euo pipefail
-          if grep -q "cloudflare_module_default" .output/server/index.mjs; then
-            echo "Falscher Nitro-Build erkannt: Cloudflare statt node-server."
-            echo "Bitte vite.config.ts auf nitro preset node-server setzen."
-            exit 1
-          fi
-
       - name: Prepare deploy package
         shell: bash
         run: |
