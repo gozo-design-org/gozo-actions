@@ -69,15 +69,11 @@ jobs:
         run: |
           set -euo pipefail
           cat > passenger.cjs <<'EOF'
-          const { spawn } = require('node:child_process');
+          process.env.NODE_ENV = 'production';
+          process.env.HOST = process.env.HOST || '0.0.0.0';
+          process.env.PORT = process.env.PORT || process.env.PASSENGER_APP_PORT || process.env.PASSENGER_PORT || '7081';
 
-          const child = spawn(process.execPath, ['.output/server/index.mjs'], {
-            env: { ...process.env, NODE_ENV: 'production' },
-            stdio: 'inherit'
-          });
-
-          child.on('exit', (code) => process.exit(code ?? 1));
-          child.on('error', (err) => {
+          import('./.output/server/index.mjs').catch((err) => {
             console.error(err);
             process.exit(1);
           });
