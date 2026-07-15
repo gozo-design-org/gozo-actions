@@ -53,7 +53,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm run build -- --preset node-server
+          NITRO_PRESET=node-server npm run build
 
       - name: Verify build output exists
         shell: bash
