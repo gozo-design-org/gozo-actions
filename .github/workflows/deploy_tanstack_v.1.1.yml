@@ -29,12 +29,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify package files
+      - name: Verify package.json exists
         shell: bash
         run: |
           set -euo pipefail
-          pwd
-          ls -la
           if [ ! -f package.json ]; then
             echo "package.json fehlt im Repo-Root."
             exit 1
@@ -77,6 +75,12 @@ jobs:
 
           cp -R .output deploy/.output
 
+          if [ -d public ]; then
+            cp -R public deploy/public
+          else
+            mkdir -p deploy/public
+          fi
+
           cat > deploy/app.js <<'EOF'
           import { createServer } from 'node:http'
           import handler from './.output/server/index.mjs'
@@ -100,6 +104,16 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "${{ secrets.PLESK_HOST }}" >> ~/.ssh/known_hosts
 
+      - name: Ensure remote directories exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}" <<EOF
+            mkdir -p "${{ inputs.DEPLOY_PATH }}"
+            mkdir -p "${{ inputs.DEPLOY_PATH }}/public"
+            mkdir -p "${{ inputs.DEPLOY_PATH }}/tmp"
+          EOF
+
       - name: Deploy files to Plesk
         shell: bash
         run: |
@@ -107,7 +121,6 @@ jobs:
           rsync -rlz --delete --omit-dir-times --no-perms --no-owner --no-group \
             -e "ssh -i ~/.ssh/id_ed25519" \
             deploy/ "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}:${{ inputs.DEPLOY_PATH }}/"
-
 
       - name: Restart application
         shell: bash
