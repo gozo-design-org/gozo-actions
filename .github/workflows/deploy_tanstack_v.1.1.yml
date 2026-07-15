@@ -53,7 +53,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm run build
+          npm run build -- --preset node-server
 
       - name: Verify build output exists
         shell: bash
