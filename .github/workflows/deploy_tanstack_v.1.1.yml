@@ -42,6 +42,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.NODE_VERSION }}
+          cache: npm
 
       - name: Install dependencies
         shell: bash
@@ -64,6 +65,25 @@ jobs:
             exit 1
           fi
 
+      - name: Create Passenger startup file
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > passenger.cjs <<'EOF'
+          const { spawn } = require('node:child_process');
+
+          const child = spawn(process.execPath, ['.output/server/index.mjs'], {
+            env: { ...process.env, NODE_ENV: 'production' },
+            stdio: 'inherit'
+          });
+
+          child.on('exit', (code) => process.exit(code ?? 1));
+          child.on('error', (err) => {
+            console.error(err);
+            process.exit(1);
+          });
+          EOF
+
       - name: Prepare deploy package
         shell: bash
         run: |
@@ -80,9 +100,12 @@ jobs:
             mkdir -p deploy/public
           fi
 
-          cat > deploy/app.js <<'EOF'
-          import './.output/server/index.mjs'
-          EOF
+          cp package.json deploy/package.json
+          cp passenger.cjs deploy/passenger.cjs
+
+          if [ -f package-lock.json ]; then
+            cp package-lock.json deploy/package-lock.json
+          fi
 
           mkdir -p deploy/tmp
           touch deploy/tmp/restart.txt
