@@ -1,0 +1,151 @@
+name: Deploy TanStack to Plesk
+
+on:
+  workflow_call:
+    inputs:
+      DEPLOY_PATH:
+        required: true
+        type: string
+      SITE_URL:
+        required: true
+        type: string
+      NODE_VERSION:
+        required: false
+        type: string
+        default: '22'
+    secrets:
+      PLESK_HOST:
+        required: true
+      PLESK_USER:
+        required: true
+      PLESK_SSH_KEY:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify package.json exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f package.json ]; then
+            echo "package.json fehlt im Repo-Root."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.NODE_VERSION }}
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Build application
+        shell: bash
+        run: |
+          set -euo pipefail
+          NITRO_PRESET=node-server npm run build
+
+      - name: Verify build output exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f .output/server/index.mjs ]; then
+            echo ".output/server/index.mjs wurde nicht gefunden."
+            exit 1
+          fi
+
+      - name: Create Passenger startup file
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > passenger.cjs <<'EOF'
+          process.env.NODE_ENV = 'production';
+          process.env.HOST = process.env.HOST || '0.0.0.0';
+          process.env.PORT = process.env.PORT || process.env.PASSENGER_APP_PORT || process.env.PASSENGER_PORT || '7081';
+
+          import('./.output/server/index.mjs').catch((err) => {
+            console.error(err);
+            process.exit(1);
+          });
+          EOF
+
+      - name: Prepare deploy package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf deploy
+          mkdir -p deploy
+
+          cp -R .output deploy/.output
+
+          if [ -d public ]; then
+            cp -R public deploy/public
+          else
+            mkdir -p deploy/public
+          fi
+
+          cp package.json deploy/package.json
+          cp passenger.cjs deploy/passenger.cjs
+
+          if [ -f package-lock.json ]; then
+            cp package-lock.json deploy/package-lock.json
+          fi
+
+          mkdir -p deploy/tmp
+          touch deploy/tmp/restart.txt
+
+      - name: Setup SSH key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PLESK_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.PLESK_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Ensure remote directories exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}" <<EOF
+            mkdir -p "${{ inputs.DEPLOY_PATH }}"
+            mkdir -p "${{ inputs.DEPLOY_PATH }}/public"
+            mkdir -p "${{ inputs.DEPLOY_PATH }}/tmp"
+          EOF
+
+      - name: Deploy files to Plesk
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -rlz --delete --omit-dir-times --no-perms --no-owner --no-group \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            deploy/ "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}:${{ inputs.DEPLOY_PATH }}/"
+
+      - name: Restart application
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 "${{ secrets.PLESK_USER }}@${{ secrets.PLESK_HOST }}" <<EOF
+            cd "${{ inputs.DEPLOY_PATH }}"
+            mkdir -p tmp
+            touch tmp/restart.txt
+            echo "Restart triggered."
+          EOF
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 10
+          curl -I "${{ inputs.SITE_URL }}" || true
